@@ -38,8 +38,8 @@ static uint64_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	uint64_t pgidx;
 
-	NVMEV_DEBUG_VERBOSE("%s: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", __func__,
-			ppa->g.ch, ppa->g.lun, ppa->g.pl, ppa->g.blk, ppa->g.pg);
+	NVMEV_DEBUG_VERBOSE("%s: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", __func__, ppa->g.ch,
+			    ppa->g.lun, ppa->g.pl, ppa->g.blk, ppa->g.pg);
 
 	pgidx = ppa->g.ch * spp->pgs_per_ch + ppa->g.lun * spp->pgs_per_lun +
 		ppa->g.pl * spp->pgs_per_pl + ppa->g.blk * spp->pgs_per_blk + ppa->g.pg;
@@ -217,8 +217,8 @@ static void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	struct line_mgmt *lm = &conv_ftl->lm;
 	struct write_pointer *wpp = __get_wp(conv_ftl, io_type);
 
-	NVMEV_DEBUG_VERBOSE("current wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n",
-			wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg);
+	NVMEV_DEBUG_VERBOSE("current wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", wpp->ch, wpp->lun,
+			    wpp->pl, wpp->blk, wpp->pg);
 
 	check_addr(wpp->pg, spp->pgs_per_blk);
 	wpp->pg++;
@@ -276,7 +276,7 @@ static void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	NVMEV_ASSERT(wpp->pl == 0);
 out:
 	NVMEV_DEBUG_VERBOSE("advanced wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d (curline %d)\n",
-			wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg, wpp->curline->id);
+			    wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg, wpp->curline->id);
 }
 
 static struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type)
@@ -763,8 +763,8 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 
 	ppa.g.blk = victim_line->id;
 	NVMEV_DEBUG_VERBOSE("GC-ing line:%d,ipc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
-		    victim_line->ipc, victim_line->vpc, conv_ftl->lm.victim_line_cnt,
-		    conv_ftl->lm.full_line_cnt, conv_ftl->lm.free_line_cnt);
+			    victim_line->ipc, victim_line->vpc, conv_ftl->lm.victim_line_cnt,
+			    conv_ftl->lm.full_line_cnt, conv_ftl->lm.free_line_cnt);
 
 	conv_ftl->wfc.credits_to_refill = victim_line->ipc;
 
@@ -856,7 +856,8 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 	};
 
 	NVMEV_ASSERT(conv_ftls);
-	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn, nr_lba, end_lpn);
+	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn,
+			    nr_lba, end_lpn);
 	if ((end_lpn / nr_parts) >= spp->tt_pgs) {
 		NVMEV_ERROR("%s: lpn passed FTL range (start_lpn=%lld > tt_pgs=%ld)\n", __func__,
 			    start_lpn, spp->tt_pgs);
@@ -882,10 +883,11 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 			local_lpn = lpn / nr_parts;
 			cur_ppa = get_maptbl_ent(conv_ftl, local_lpn);
 			if (!mapped_ppa(&cur_ppa) || !valid_ppa(conv_ftl, &cur_ppa)) {
-				NVMEV_DEBUG_VERBOSE("lpn 0x%llx not mapped to valid ppa\n", local_lpn);
+				NVMEV_DEBUG_VERBOSE("lpn 0x%llx not mapped to valid ppa\n",
+						    local_lpn);
 				NVMEV_DEBUG_VERBOSE("Invalid ppa,ch:%d,lun:%d,blk:%d,pl:%d,pg:%d\n",
-					    cur_ppa.g.ch, cur_ppa.g.lun, cur_ppa.g.blk,
-					    cur_ppa.g.pl, cur_ppa.g.pg);
+						    cur_ppa.g.ch, cur_ppa.g.lun, cur_ppa.g.blk,
+						    cur_ppa.g.pl, cur_ppa.g.pg);
 				continue;
 			}
 
@@ -950,10 +952,11 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 		.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
 	};
 
-	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn, nr_lba, end_lpn);
+	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn,
+			    nr_lba, end_lpn);
 	if ((end_lpn / nr_parts) >= spp->tt_pgs) {
-		NVMEV_ERROR("%s: lpn passed FTL range (start_lpn=%lld > tt_pgs=%ld)\n",
-				__func__, start_lpn, spp->tt_pgs);
+		NVMEV_ERROR("%s: lpn passed FTL range (start_lpn=%lld > tt_pgs=%ld)\n", __func__,
+			    start_lpn, spp->tt_pgs);
 		return false;
 	}
 
@@ -1062,7 +1065,7 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struc
 		break;
 	default:
 		NVMEV_ERROR("%s: command not implemented: %s (0x%x)\n", __func__,
-				nvme_opcode_string(cmd->common.opcode), cmd->common.opcode);
+			    nvme_opcode_string(cmd->common.opcode), cmd->common.opcode);
 		break;
 	}
 

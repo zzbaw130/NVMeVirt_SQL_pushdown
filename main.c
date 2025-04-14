@@ -502,9 +502,11 @@ static bool __load_configs(struct nvmev_config *config)
 
 	while ((cpu = strsep(&cpus, ",")) != NULL) {
 		cpu_nr = (unsigned int)simple_strtol(cpu, NULL, 10);
+		//first cpu is used for dispatcher
 		if (first) {
 			config->cpu_nr_dispatcher = cpu_nr;
 		} else {
+			//the rest of the cpu is used for io workers
 			config->cpu_nr_io_workers[config->nr_io_workers] = cpu_nr;
 			config->nr_io_workers++;
 		}
@@ -549,6 +551,7 @@ static void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 
 	nvmev_vdev->ns = ns;
 	nvmev_vdev->nr_ns = nr_ns;
+	// 32 * page_size
 	nvmev_vdev->mdts = MDTS;
 }
 
@@ -663,7 +666,7 @@ static void NVMeV_exit(void)
 	if (io_using_dma) {
 		ioat_dma_cleanup();
 	}
-
+  
 	for (i = 0; i < nvmev_vdev->nr_sq; i++) {
 		kfree(nvmev_vdev->sqes[i]);
 	}

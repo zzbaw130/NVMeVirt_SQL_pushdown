@@ -242,6 +242,7 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #endif
 ///////////////////////////////////////////////////////////////////////////
 
+// Each element in the array will be configured as a namespace
 static const uint32_t ns_ssd_type[] = { NS_SSD_TYPE_0, NS_SSD_TYPE_1 };
 static const uint64_t ns_capacity[] = { NS_CAPACITY_0, NS_CAPACITY_1 };
 

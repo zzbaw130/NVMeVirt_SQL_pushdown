@@ -12,9 +12,9 @@
 #define CONFIG_NVMEV_IO_WORKER_BY_SQ
 #undef CONFIG_NVMEV_FAST_X86_IRQ_HANDLING
 
-#undef CONFIG_NVMEV_VERBOSE
-#undef CONFIG_NVMEV_DEBUG
-#undef CONFIG_NVMEV_DEBUG_VERBOSE
+#define CONFIG_NVMEV_VERBOSE
+#define CONFIG_NVMEV_DEBUG
+#define CONFIG_NVMEV_DEBUG_VERBOSE
 
 /*
  * If CONFIG_NVMEVIRT_IDLE_TIMEOUT is set, sleep for a jiffie after
@@ -147,26 +147,41 @@ struct nvmev_admin_queue {
 #define CQ_ENTRY_TO_PAGE_OFFSET(entry_id) (entry_id % NR_CQE_PER_PAGE)
 
 struct nvmev_config {
-	unsigned long memmap_start; // byte
-	unsigned long memmap_size; // byte
+	//Reserved memory address(byte), it is configured by "memmap_start" when execute insmod command
+	unsigned long memmap_start;
+	//Reserved memory size(byte), it is configured by "memmap_size" when execute insmod command
+	unsigned long memmap_size;
 
-	unsigned long storage_start; //byte
-	unsigned long storage_size; // byte
+	//Reserved storage address(byte), offset by 1MB from memmap_start
+	unsigned long storage_start;
+	//Reserved storage size(byte), equals (memmap_size - 1MB)
+	unsigned long storage_size;
 
+	//cpu number(core id) for dispatcher
 	unsigned int cpu_nr_dispatcher;
+	//number of io workers
 	unsigned int nr_io_workers;
+	//cpu numbers(core ids) for io workers
 	unsigned int cpu_nr_io_workers[32];
 
 	/* TODO Refactoring storage configurations */
+	//Number of I/O units that operate in parallel
 	unsigned int nr_io_units;
-	unsigned int io_unit_shift; // 2^
+	//Size of each I/O unit (2^)
+	unsigned int io_unit_shift;
 
-	unsigned int read_delay; // ns
-	unsigned int read_time; // ns
-	unsigned int read_trailing; // ns
-	unsigned int write_delay; // ns
-	unsigned int write_time; // ns
-	unsigned int write_trailing; // ns
+	//Read time in nanoseconds
+	unsigned int read_delay;
+	//Read delay in nanoseconds
+	unsigned int read_time;
+	//Read trailing in nanoseconds
+	unsigned int read_trailing;
+	//Write time in nanoseconds
+	unsigned int write_delay;
+	//Write delay in nanoseconds
+	unsigned int write_time;
+	//Write trailing in nanoseconds
+	unsigned int write_trailing;
 };
 
 struct nvmev_io_work {
@@ -214,21 +229,32 @@ struct nvmev_io_worker {
 };
 
 struct nvmev_dev {
+	// virtual bus scaned by the OS
 	struct pci_bus *virt_bus;
+	// Space for pci_header and all capabilities, 4KB
 	void *virtDev;
+	//PCI Header, start from 0x00, size 64Byte
 	struct pci_header *pcihdr;
+	//Power Management Capability, start from 0x40, size 8Byte
 	struct pci_pm_cap *pmcap;
+	//MSI/MSI-X Capability, start from 0x50, size 12Byte
 	struct pci_msix_cap *msixcap;
+	//PCI Express Capability, start from 0x60, size 36Byte
 	struct pcie_cap *pciecap;
+	//PCI Express Extended Capabilities, start from 0x100, take up the remaining space(max 3840Byte)
 	struct pci_ext_cap *extcap;
 
+	// virtual device scaned by the OS
 	struct pci_dev *pdev;
 
 	struct nvmev_config config;
+	// nvmev_dispatcher space pointer
 	struct task_struct *nvmev_dispatcher;
 
+	// Storage Area Start Adress
 	void *storage_mapped;
 
+	// io_workers space pointer
 	struct nvmev_io_worker *io_workers;
 	unsigned int io_worker_turn;
 
@@ -236,30 +262,55 @@ struct nvmev_dev {
 
 	bool intx_disabled;
 
+	// old register space, it is used to check whether any registers have changed
 	struct __nvme_bar *old_bar;
+	// new register space, it occupies PAGE_SIZE of space
 	struct nvme_ctrl_regs __iomem *bar;
 
+	// old doorbells space, it is used to check whether any doorbells have changed
 	u32 *old_dbs;
+	/**
+	 * new doorbells space, it occupies PAGE_SIZE of space, next to bar
+	 * dbs[0]: Submission Queue 0 Tail Doorbell(Admin)
+	 * dbs[1]: Completion Queue 0 Head Doorbell(Admin)
+	 * dbs[2]: Submission Queue 1 Tail Doorbell
+	 * dbs[3]: Completion Queue 1 Head Doorbell
+	 * ...
+	 * dbs[2*n]: Submission Queue n Tail Doorbell
+	 * dbs[2*n+1]: Completion Queue n Head Doorbell
+	 */
 	u32 __iomem *dbs;
 
+	// namespace config
 	struct nvmev_ns *ns;
+	// number of namespace
 	unsigned int nr_ns;
+	// number of submission queue
 	unsigned int nr_sq;
+	// number of completion queue
 	unsigned int nr_cq;
 
 	struct nvmev_admin_queue *admin_q;
 	struct nvmev_submission_queue *sqes[NR_MAX_IO_QUEUE + 1];
 	struct nvmev_completion_queue *cqes[NR_MAX_IO_QUEUE + 1];
 
+	// Maximum Data Transfer Size,  when converted to bytes, it equals page_size * (2 ^ mdts)
 	unsigned int mdts;
 
+	// file root in /proc, default is /proc/nvme
 	struct proc_dir_entry *proc_root;
+	// read_times file, the path is /proc/nvme/read_times
 	struct proc_dir_entry *proc_read_times;
+	// write_times file, the path is /proc/nvme/write_times
 	struct proc_dir_entry *proc_write_times;
+	// io_units file, the path is /proc/nvme/io_units
 	struct proc_dir_entry *proc_io_units;
+	// stat file, the path is /proc/nvme/stat
 	struct proc_dir_entry *proc_stat;
+	// debug file, the path is /proc/nvme/debug
 	struct proc_dir_entry *proc_debug;
 
+	// io units space start address
 	unsigned long long *io_unit_stat;
 };
 

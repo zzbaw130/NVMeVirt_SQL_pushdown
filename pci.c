@@ -262,6 +262,16 @@ out:
 	return true;
 }
 
+/**
+ * @brief read register[where] data into val from nvme device
+ * 
+ * @param bus pci bus
+ * @param devfn device and function id
+ * @param where register offset
+ * @param size read data size, in byte
+ * @param val read data buffer
+ * @return int 0 means success, others means failed
+ */
 static int nvmev_pci_read(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 *val)
 {
 	if (devfn != 0)
@@ -274,6 +284,16 @@ static int nvmev_pci_read(struct pci_bus *bus, unsigned int devfn, int where, in
 	return 0;
 };
 
+/**
+ * @brief write _val to nvme device register[where]
+ * 
+ * @param bus pci bus
+ * @param devfn device and function id
+ * @param where register offset
+ * @param size write data size, in byte
+ * @param _val write data
+ * @return int 0 means success, others means failed
+ */
 static int nvmev_pci_write(struct pci_bus *bus, unsigned int devfn, int where, int size, u32 _val)
 {
 	u32 mask = ~(0U);
@@ -429,6 +449,11 @@ static struct pci_bus *__create_pci_bus(void)
 	return bus;
 };
 
+/**
+ * @brief Allocate space for virtual device
+ * 
+ * @return struct nvmev_dev* virtual device
+ */
 struct nvmev_dev *VDEV_INIT(void)
 {
 	struct nvmev_dev *nvmev_vdev;
@@ -498,6 +523,7 @@ static void PCI_HEADER_SETTINGS(struct pci_header *pcihdr, unsigned long base_pa
 	pcihdr->cc.scc = 0x08;
 	pcihdr->cc.pi = 0x02;
 
+	// BAR0 & BAR1 request 32KB
 	pcihdr->mlbar.tp = PCI_BASE_ADDRESS_MEM_TYPE_64 >> 1;
 	pcihdr->mlbar.ba = (base_pa & 0xFFFFFFFF) >> 14;
 

@@ -171,3 +171,7 @@ sphinx_*/
 
 # Local makefile
 Makefile.local
+
+# log file
+*.log
+nvme_basic
