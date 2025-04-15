@@ -584,6 +584,7 @@ static void gc_read_page(struct conv_ftl *conv_ftl, struct ppa *ppa)
 		struct nand_cmd gcr = {
 			.type = GC_IO,
 			.cmd = NAND_READ,
+			.amp_factor = 100,
 			.stime = 0,
 			.xfer_size = spp->pgsz,
 			.interleave_pci_dma = false,
@@ -617,6 +618,7 @@ static uint64_t gc_write_page(struct conv_ftl *conv_ftl, struct ppa *old_ppa)
 		struct nand_cmd gcw = {
 			.type = GC_IO,
 			.cmd = NAND_NOP,
+			.amp_factor = 100,
 			.stime = 0,
 			.interleave_pci_dma = false,
 			.ppa = &new_ppa,
@@ -717,6 +719,7 @@ static void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 		struct nand_cmd gcr = {
 			.type = GC_IO,
 			.cmd = NAND_READ,
+			.amp_factor = 100,
 			.stime = 0,
 			.xfer_size = spp->pgsz * cnt,
 			.interleave_pci_dma = false,
@@ -792,6 +795,7 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 						struct nand_cmd gce = {
 							.type = GC_IO,
 							.cmd = NAND_ERASE,
+							.amp_factor = 100,
 							.stime = 0,
 							.interleave_pci_dma = false,
 							.ppa = &ppa,
@@ -831,57 +835,83 @@ static bool is_same_flash_page(struct conv_ftl *conv_ftl, struct ppa ppa1, struc
 
 static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
+	// 初始化FTL相关结构
+	// 获取FTL实例数组
 	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
+	// 首个FTL实例
 	struct conv_ftl *conv_ftl = &conv_ftls[0];
 	/* spp are shared by all instances*/
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 
+	// 解析NVMe命令
 	struct nvme_command *cmd = req->cmd;
+	// 起始逻辑块地址
 	uint64_t lba = cmd->rw.slba;
+	// 请求的LBA数量
 	uint64_t nr_lba = (cmd->rw.length + 1);
+	// 起始逻辑页号
 	uint64_t start_lpn = lba / spp->secs_per_pg;
+	// 结束逻辑页号
 	uint64_t end_lpn = (lba + nr_lba - 1) / spp->secs_per_pg;
 	uint64_t lpn;
+	// 请求开始时间
 	uint64_t nsecs_start = req->nsecs_start;
+	// 完成时间跟踪
 	uint64_t nsecs_completed, nsecs_latest = nsecs_start;
+	// 当前传输数据量
 	uint32_t xfer_size, i;
+	// 存储分区数量，即die/lun（并行通道数）
 	uint32_t nr_parts = ns->nr_parts;
 
 	struct ppa prev_ppa;
 	struct nand_cmd srd = {
 		.type = USER_IO,
+		.amp_factor = 100,
 		.cmd = NAND_READ,
 		.stime = nsecs_start,
-		.interleave_pci_dma = true,
+		.interleave_pci_dma = true, // 启用PCIe交错传输
 	};
 
+	/*----- 预检阶段 -----*/
 	NVMEV_ASSERT(conv_ftls);
 	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn,
 			    nr_lba, end_lpn);
+	// 检查LPN是否超出FTL管理范围
 	if ((end_lpn / nr_parts) >= spp->tt_pgs) {
 		NVMEV_ERROR("%s: lpn passed FTL range (start_lpn=%lld > tt_pgs=%ld)\n", __func__,
 			    start_lpn, spp->tt_pgs);
 		return false;
 	}
 
+	 /*----- 延迟计算 -----*/
+	 // 根据请求大小选择基础延迟
 	if (LBA_TO_BYTE(nr_lba) <= (KB(4) * nr_parts)) {
+		// 小IO优化延迟（4KB对齐）
 		srd.stime += spp->fw_4kb_rd_lat;
 	} else {
+		// 常规读取延迟
 		srd.stime += spp->fw_rd_lat;
 	}
 
+	/*----- 主处理循环 -----*/
 	for (i = 0; (i < nr_parts) && (start_lpn <= end_lpn); i++, start_lpn++) {
+		// 轮询选择FTL实例，即交错传输
 		conv_ftl = &conv_ftls[start_lpn % nr_parts];
 		xfer_size = 0;
+		// 初始PPA获取，用于聚合
 		prev_ppa = get_maptbl_ent(conv_ftl, start_lpn / nr_parts);
 
 		/* normal IO read path */
+		/* 逻辑页遍历 */
 		for (lpn = start_lpn; lpn <= end_lpn; lpn += nr_parts) {
 			uint64_t local_lpn;
 			struct ppa cur_ppa;
-
+			
+			// 获取物理页地址
 			local_lpn = lpn / nr_parts;
 			cur_ppa = get_maptbl_ent(conv_ftl, local_lpn);
+
+			// 检查PPA有效性
 			if (!mapped_ppa(&cur_ppa) || !valid_ppa(conv_ftl, &cur_ppa)) {
 				NVMEV_DEBUG_VERBOSE("lpn 0x%llx not mapped to valid ppa\n",
 						    local_lpn);
@@ -892,20 +922,28 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 			}
 
 			// aggregate read io in same flash page
+			/* IO聚合逻辑 */
 			if (mapped_ppa(&prev_ppa) &&
 			    is_same_flash_page(conv_ftl, cur_ppa, prev_ppa)) {
 				xfer_size += spp->pgsz;
 				continue;
 			}
 
+			/* 提交聚合IO */
 			if (xfer_size > 0) {
+				// 设置传输大小
 				srd.xfer_size = xfer_size;
+				// 指定物理地址
 				srd.ppa = &prev_ppa;
+				// 模拟NAND操作
 				nsecs_completed = ssd_advance_nand(conv_ftl->ssd, &srd);
+				// 更新时间戳
 				nsecs_latest = max(nsecs_completed, nsecs_latest);
 			}
 
+			// 重置传输量
 			xfer_size = spp->pgsz;
+			// 更新prev_ppa
 			prev_ppa = cur_ppa;
 		}
 
@@ -917,7 +955,137 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 			nsecs_latest = max(nsecs_completed, nsecs_latest);
 		}
 	}
+	
+	/*----- 返回结果 -----*/
+	ret->nsecs_target = nsecs_latest;
+	ret->status = NVME_SC_SUCCESS;
+	return true;
+}
 
+static bool conv_filter(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+{
+	// 初始化FTL相关结构
+	// 获取FTL实例数组
+	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
+	// 首个FTL实例
+	struct conv_ftl *conv_ftl = &conv_ftls[0];
+	/* spp are shared by all instances*/
+	struct ssdparams *spp = &conv_ftl->ssd->sp;
+
+	// 解析NVMe命令
+	struct nvme_command *cmd = req->cmd;
+	// 起始逻辑块地址
+	uint64_t lba = cmd->rw.slba;
+	// 请求的LBA数量
+	uint64_t nr_lba = (cmd->rw.length + 1);
+	// 起始逻辑页号
+	uint64_t start_lpn = lba / spp->secs_per_pg;
+	// 结束逻辑页号
+	uint64_t end_lpn = (lba + nr_lba - 1) / spp->secs_per_pg;
+	uint64_t lpn;
+	// 请求开始时间
+	uint64_t nsecs_start = req->nsecs_start;
+	// 完成时间跟踪
+	uint64_t nsecs_completed, nsecs_latest = nsecs_start;
+	// 当前传输数据量
+	uint32_t xfer_size, i;
+	// 存储分区数量，即die/lun（并行通道数）
+	uint32_t nr_parts = ns->nr_parts;
+
+	struct ppa prev_ppa;
+	struct nand_cmd srd = {
+		.type = USER_IO,
+		.amp_factor = cmd->filter.filter_factor,
+		.cmd = NAND_READ,
+		.stime = nsecs_start,
+		.interleave_pci_dma = true, // 启用PCIe交错传输
+	};
+
+	/*----- 预检阶段 -----*/
+	NVMEV_ASSERT(conv_ftls);
+	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn,
+			    nr_lba, end_lpn);
+	// 检查LPN是否超出FTL管理范围
+	if ((end_lpn / nr_parts) >= spp->tt_pgs) {
+		NVMEV_ERROR("%s: lpn passed FTL range (start_lpn=%lld > tt_pgs=%ld)\n", __func__,
+			    start_lpn, spp->tt_pgs);
+		return false;
+	}
+
+	 /*----- 延迟计算 -----*/
+	 // 根据请求大小选择基础延迟
+	if (LBA_TO_BYTE(nr_lba) <= (KB(4) * nr_parts)) {
+		// 小IO优化延迟（4KB对齐）
+		srd.stime += spp->fw_4kb_rd_lat;
+	} else {
+		// 常规读取延迟
+		srd.stime += spp->fw_rd_lat;
+	}
+
+	/*----- 主处理循环 -----*/
+	for (i = 0; (i < nr_parts) && (start_lpn <= end_lpn); i++, start_lpn++) {
+		// 轮询选择FTL实例，即交错传输
+		conv_ftl = &conv_ftls[start_lpn % nr_parts];
+		xfer_size = 0;
+		// 初始PPA获取，用于聚合
+		prev_ppa = get_maptbl_ent(conv_ftl, start_lpn / nr_parts);
+
+		/* normal IO read path */
+		/* 逻辑页遍历 */
+		for (lpn = start_lpn; lpn <= end_lpn; lpn += nr_parts) {
+			uint64_t local_lpn;
+			struct ppa cur_ppa;
+			
+			// 获取物理页地址
+			local_lpn = lpn / nr_parts;
+			cur_ppa = get_maptbl_ent(conv_ftl, local_lpn);
+
+			// 检查PPA有效性
+			if (!mapped_ppa(&cur_ppa) || !valid_ppa(conv_ftl, &cur_ppa)) {
+				NVMEV_DEBUG_VERBOSE("lpn 0x%llx not mapped to valid ppa\n",
+						    local_lpn);
+				NVMEV_DEBUG_VERBOSE("Invalid ppa,ch:%d,lun:%d,blk:%d,pl:%d,pg:%d\n",
+						    cur_ppa.g.ch, cur_ppa.g.lun, cur_ppa.g.blk,
+						    cur_ppa.g.pl, cur_ppa.g.pg);
+				continue;
+			}
+
+			// aggregate read io in same flash page
+			/* IO聚合逻辑 */
+			if (mapped_ppa(&prev_ppa) &&
+			    is_same_flash_page(conv_ftl, cur_ppa, prev_ppa)) {
+				xfer_size += spp->pgsz;
+				continue;
+			}
+
+			/* 提交聚合IO */
+			if (xfer_size > 0) {
+				// 设置传输大小
+				srd.xfer_size = xfer_size;
+				// 指定物理地址
+				srd.ppa = &prev_ppa;
+				// 模拟NAND操作
+				nsecs_completed = ssd_advance_nand(conv_ftl->ssd, &srd);
+				// 更新时间戳
+				nsecs_latest = max(nsecs_completed, nsecs_latest);
+			}
+
+			// 重置传输量
+			xfer_size = spp->pgsz;
+			// 更新prev_ppa
+			prev_ppa = cur_ppa;
+		}
+
+		// issue remaining io
+		if (xfer_size > 0) {
+			srd.xfer_size = xfer_size;
+			srd.ppa = &prev_ppa;
+			nsecs_completed = ssd_advance_nand(conv_ftl->ssd, &srd);
+			nsecs_latest = max(nsecs_completed, nsecs_latest);
+		}
+	}
+	
+	/*----- 返回结果 -----*/
 	ret->nsecs_target = nsecs_latest;
 	ret->status = NVME_SC_SUCCESS;
 	return true;
@@ -948,6 +1116,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	struct nand_cmd swr = {
 		.type = USER_IO,
 		.cmd = NAND_WRITE,
+		.amp_factor = 100,
 		.interleave_pci_dma = false,
 		.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
 	};
@@ -1058,6 +1227,10 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struc
 		break;
 	case nvme_cmd_read:
 		if (!conv_read(ns, req, ret))
+			return false;
+		break;
+	case nvme_cmd_filter:
+		if (!conv_filter(ns, req, ret))
 			return false;
 		break;
 	case nvme_cmd_flush:

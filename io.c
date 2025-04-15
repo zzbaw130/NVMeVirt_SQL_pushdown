@@ -15,8 +15,6 @@
 struct buffer;
 #endif
 
-#undef PERF_DEBUG
-
 #define sq_entry(entry_id) sq->sq[SQ_ENTRY_TO_PAGE_NUM(entry_id)][SQ_ENTRY_TO_PAGE_OFFSET(entry_id)]
 #define cq_entry(entry_id) cq->cq[CQ_ENTRY_TO_PAGE_NUM(entry_id)][CQ_ENTRY_TO_PAGE_OFFSET(entry_id)]
 
@@ -62,6 +60,10 @@ static unsigned int __do_perform_io(int sqid, int sq_entry)
 	length = __cmd_io_size(cmd);
 	remaining = length;
 
+	// filter指令不在此处执行
+	// if (cmd->opcode == nvme_cmd_filter)
+		// return length;
+		
 	while (remaining) {
 		size_t io_size;
 		void *vaddr;
@@ -91,8 +93,7 @@ static unsigned int __do_perform_io(int sqid, int sq_entry)
 				io_size = PAGE_SIZE - mem_offs;
 		}
 
-		if (cmd->opcode == nvme_cmd_write ||
-		    cmd->opcode == nvme_cmd_zone_append) {
+		if (cmd->opcode == nvme_cmd_write || cmd->opcode == nvme_cmd_zone_append) {
 			memcpy(nvmev_vdev->ns[nsid].mapped + offset, vaddr + mem_offs, io_size);
 		} else if (cmd->opcode == nvme_cmd_read) {
 			memcpy(vaddr + mem_offs, nvmev_vdev->ns[nsid].mapped + offset, io_size);
@@ -195,8 +196,7 @@ static unsigned int __do_perform_io_using_dma(int sqid, int sq_entry)
 
 		io_size = min_t(size_t, remaining, page_size);
 
-		if (cmd->opcode == nvme_cmd_write ||
-		    cmd->opcode == nvme_cmd_zone_append) {
+		if (cmd->opcode == nvme_cmd_write || cmd->opcode == nvme_cmd_zone_append) {
 			ioat_dma_submit(paddr, nvmev_vdev->config.storage_start + offset, io_size);
 		} else if (cmd->opcode == nvme_cmd_read) {
 			ioat_dma_submit(nvmev_vdev->config.storage_start + offset, paddr, io_size);
@@ -292,9 +292,9 @@ static void __enqueue_io_req(int sqid, int cqid, int sq_entry, unsigned long lon
 
 	w = worker->work_queue + entry;
 
-	NVMEV_DEBUG_VERBOSE("%s/%u[%d], sq %d cq %d, entry %d, %llu + %llu\n", worker->thread_name, entry,
-		    sq_entry(sq_entry).rw.opcode, sqid, cqid, sq_entry, nsecs_start,
-		    ret->nsecs_target - nsecs_start);
+	NVMEV_DEBUG_VERBOSE("%s/%u[%d], sq %d cq %d, entry %d, %llu + %llu\n", worker->thread_name,
+			    entry, sq_entry(sq_entry).rw.opcode, sqid, cqid, sq_entry, nsecs_start,
+			    ret->nsecs_target - nsecs_start);
 
 	/////////////////////////////////
 	w->sqid = sqid;
@@ -329,8 +329,8 @@ void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 
 	w = worker->work_queue + entry;
 
-	NVMEV_DEBUG_VERBOSE("%s/%u, internal sq %d, %llu + %llu\n", worker->thread_name, entry, sqid,
-		    local_clock(), nsecs_target - local_clock());
+	NVMEV_DEBUG_VERBOSE("%s/%u, internal sq %d, %llu + %llu\n", worker->thread_name, entry,
+			    sqid, local_clock(), nsecs_target - local_clock());
 
 	/////////////////////////////////
 	w->sqid = sqid;
@@ -394,8 +394,8 @@ static void __reclaim_completed_reqs(void)
 			w->next = first_entry;
 
 			worker->free_seq_end = last_entry;
-			NVMEV_DEBUG_VERBOSE("%s: %u -- %u, %d\n", __func__,
-					first_entry, last_entry, nr_reclaimed);
+			NVMEV_DEBUG_VERBOSE("%s: %u -- %u, %d\n", __func__, first_entry, last_entry,
+					    nr_reclaimed);
 		}
 	}
 }
@@ -514,7 +514,8 @@ void nvmev_proc_io_cq(int cqid, int new_db, int old_db)
 
 		/* Should check the validity here since SPDK deletes SQ immediately
 		 * before processing associated CQes */
-		if (!nvmev_vdev->sqes[sqid]) continue;
+		if (!nvmev_vdev->sqes[sqid])
+			continue;
 
 		nvmev_vdev->sqes[sqid]->stat.nr_in_flight--;
 	}
@@ -560,6 +561,7 @@ static int nvmev_io_worker(void *data)
 {
 	struct nvmev_io_worker *worker = (struct nvmev_io_worker *)data;
 	struct nvmev_ns *ns;
+	// 记录最后I/O操作时间（用于空闲检测）
 	static unsigned long last_io_time = 0;
 
 #ifdef PERF_DEBUG
@@ -569,34 +571,47 @@ static int nvmev_io_worker(void *data)
 	unsigned long long prev_clock;
 #endif
 
+	// 打印线程启动信息（包含CPU亲和性信息）
 	NVMEV_INFO("%s started on cpu %d (node %d)\n", worker->thread_name, smp_processor_id(),
 		   cpu_to_node(smp_processor_id()));
 
+	// 主循环：持续处理I/O直到收到停止信号
 	while (!kthread_should_stop()) {
+		// 获取当前时间
+		// wallclock，墙上时钟，即真实世界的时间
 		unsigned long long curr_nsecs_wall = __get_wallclock();
+		// localclock，即cpu时钟，更加精确
 		unsigned long long curr_nsecs_local = local_clock();
+		// 计算时钟偏差
 		long long delta = curr_nsecs_wall - curr_nsecs_local;
 
+		// 原子读取当前工作项序号
 		volatile unsigned int curr = worker->io_seq;
 		int qidx;
 
+		// 遍历工作队列链表
 		while (curr != -1) {
 			struct nvmev_io_work *w = &worker->work_queue[curr];
+			// 校准时间
 			unsigned long long curr_nsecs = local_clock() + delta;
+			// 更新最新操作时间戳
 			worker->latest_nsecs = curr_nsecs;
 
+			// 跳过已完成项
 			if (w->is_completed == true) {
 				curr = w->next;
 				continue;
 			}
 
+			/* 阶段1：数据传输 */
 			if (w->is_copied == false) {
 #ifdef PERF_DEBUG
 				w->nsecs_copy_start = local_clock() + delta;
 #endif
 				if (w->is_internal) {
-					;
+					; // 内部操作无需数据传输
 				} else if (io_using_dma) {
+					// DMA传输
 					__do_perform_io_using_dma(w->sqid, w->sq_entry);
 				} else {
 #if (BASE_SSD == KV_PROTOTYPE)
@@ -609,7 +624,8 @@ static int nvmev_io_worker(void *data)
 					} else {
 						__do_perform_io(w->sqid, w->sq_entry);
 					}
-#else 
+#else
+					// 常规内存拷贝
 					__do_perform_io(w->sqid, w->sq_entry);
 #endif
 				}
@@ -617,25 +633,33 @@ static int nvmev_io_worker(void *data)
 #ifdef PERF_DEBUG
 				w->nsecs_copy_done = local_clock() + delta;
 #endif
+				// 标记数据拷贝完成
 				w->is_copied = true;
+				// 刷新最后活动时间
 				last_io_time = jiffies;
 
-				NVMEV_DEBUG_VERBOSE("%s: copied %u, %d %d %d\n", worker->thread_name, curr,
-					    w->sqid, w->cqid, w->sq_entry);
+				NVMEV_DEBUG_VERBOSE("%s: copied %u, %d %d %d\n",
+						    worker->thread_name, curr, w->sqid, w->cqid,
+						    w->sq_entry);
 			}
 
+			/* 阶段2：等待完成操作 */
+			// 检查是否到达预定完成时间
 			if (w->nsecs_target <= curr_nsecs) {
 				if (w->is_internal) {
+					// 若为内部操作，只需要释放内部缓冲区
 #if (SUPPORTED_SSD_TYPE(CONV) || SUPPORTED_SSD_TYPE(ZNS))
 					buffer_release((struct buffer *)w->write_buffer,
 						       w->buffs_to_release);
 #endif
 				} else {
+					// 填充完成队列(CQ)条目
 					__fill_cq_result(w);
 				}
 
-				NVMEV_DEBUG_VERBOSE("%s: completed %u, %d %d %d\n", worker->thread_name, curr,
-					    w->sqid, w->cqid, w->sq_entry);
+				NVMEV_DEBUG_VERBOSE("%s: completed %u, %d %d %d\n",
+						    worker->thread_name, curr, w->sqid, w->cqid,
+						    w->sq_entry);
 
 #ifdef PERF_DEBUG
 				w->nsecs_cq_filled = local_clock() + delta;
@@ -646,29 +670,36 @@ static int nvmev_io_worker(void *data)
 					     w->nsecs_cq_filled - w->nsecs_start,
 					     w->nsecs_target - w->nsecs_start);
 #endif
+				// 内存屏障：确保完成状态对回收线程可见
 				mb(); /* Reclaimer shall see after here */
+				// 标记工作项完成
 				w->is_completed = true;
 			}
-
+			// 依次获取工作队列
 			curr = w->next;
 		}
 
+		/* 中断处理 */
 		for (qidx = 1; qidx <= nvmev_vdev->nr_cq; qidx++) {
 			struct nvmev_completion_queue *cq = nvmev_vdev->cqes[qidx];
 
 #ifdef CONFIG_NVMEV_IO_WORKER_BY_SQ
+			// 检查队列所属关系
 			if ((worker->id) != __get_io_worker(qidx))
 				continue;
 #endif
+			// 跳过未启用的队列
 			if (cq == NULL || !cq->irq_enabled)
 				continue;
 
+			// 尝试获取中断锁
 			if (mutex_trylock(&cq->irq_lock)) {
 				if (cq->interrupt_ready == true) {
 #ifdef PERF_DEBUG
 					prev_clock = local_clock();
 #endif
 					cq->interrupt_ready = false;
+					// 触发MSI-X中断
 					nvmev_signal_irq(cq->irq_vector);
 
 #ifdef PERF_DEBUG
@@ -686,11 +717,13 @@ static int nvmev_io_worker(void *data)
 				mutex_unlock(&cq->irq_lock);
 			}
 		}
+
+		/* 空闲调度策略 */
 		if (CONFIG_NVMEVIRT_IDLE_TIMEOUT != 0 &&
 		    time_after(jiffies, last_io_time + (CONFIG_NVMEVIRT_IDLE_TIMEOUT * HZ)))
-			schedule_timeout_interruptible(1);
+			schedule_timeout_interruptible(1); // 进入可中断的休眠状态
 		else
-			cond_resched();
+			cond_resched(); // 主动让出CPU
 	}
 
 	return 0;
@@ -700,8 +733,8 @@ void NVMEV_IO_WORKER_INIT(struct nvmev_dev *nvmev_vdev)
 {
 	unsigned int i, worker_id;
 
-	nvmev_vdev->io_workers =
-		kcalloc(sizeof(struct nvmev_io_worker), nvmev_vdev->config.nr_io_workers, GFP_KERNEL);
+	nvmev_vdev->io_workers = kcalloc(sizeof(struct nvmev_io_worker),
+					 nvmev_vdev->config.nr_io_workers, GFP_KERNEL);
 	nvmev_vdev->io_worker_turn = 0;
 
 	for (worker_id = 0; worker_id < nvmev_vdev->config.nr_io_workers; worker_id++) {
@@ -720,9 +753,11 @@ void NVMEV_IO_WORKER_INIT(struct nvmev_dev *nvmev_vdev)
 		worker->io_seq = -1;
 		worker->io_seq_end = -1;
 
-		snprintf(worker->thread_name, sizeof(worker->thread_name), "nvmev_io_worker_%d", worker_id);
+		snprintf(worker->thread_name, sizeof(worker->thread_name), "nvmev_io_worker_%d",
+			 worker_id);
 
-		worker->task_struct = kthread_create(nvmev_io_worker, worker, "%s", worker->thread_name);
+		worker->task_struct =
+			kthread_create(nvmev_io_worker, worker, "%s", worker->thread_name);
 
 		kthread_bind(worker->task_struct, nvmev_vdev->config.cpu_nr_io_workers[worker_id]);
 		wake_up_process(worker->task_struct);

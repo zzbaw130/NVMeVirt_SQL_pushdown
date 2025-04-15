@@ -15,6 +15,7 @@
 #define CONFIG_NVMEV_VERBOSE
 #define CONFIG_NVMEV_DEBUG
 #define CONFIG_NVMEV_DEBUG_VERBOSE
+#define PERF_DEBUG
 
 /*
  * If CONFIG_NVMEVIRT_IDLE_TIMEOUT is set, sleep for a jiffie after

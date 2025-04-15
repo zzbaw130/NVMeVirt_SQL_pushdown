@@ -125,6 +125,8 @@ struct ssd_pcie {
 struct nand_cmd {
 	int type;
 	int cmd;
+	// 放大因子
+	int amp_factor;
 	uint64_t xfer_size; // byte
 	uint64_t stime; /* Coperd: request arrival time */
 	bool interleave_pci_dma;

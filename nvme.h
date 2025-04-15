@@ -25,23 +25,23 @@ struct nvme_bar {
 	__u32 cmbsz; /* Controller Memory Buffer Size */
 };
 
-#define NVME_CAP_MQES(cap) ((cap)&0xffff)
+#define NVME_CAP_MQES(cap) ((cap) & 0xffff)
 #define NVME_CAP_TIMEOUT(cap) (((cap) >> 24) & 0xff)
 #define NVME_CAP_STRIDE(cap) (((cap) >> 32) & 0xf)
 #define NVME_CAP_NSSRC(cap) (((cap) >> 36) & 0x1)
 #define NVME_CAP_MPSMIN(cap) (((cap) >> 48) & 0xf)
 #define NVME_CAP_MPSMAX(cap) (((cap) >> 52) & 0xf)
 
-#define NVME_CMB_BIR(cmbloc) ((cmbloc)&0x7)
+#define NVME_CMB_BIR(cmbloc) ((cmbloc) & 0x7)
 #define NVME_CMB_OFST(cmbloc) (((cmbloc) >> 12) & 0xfffff)
 #define NVME_CMB_SZ(cmbsz) (((cmbsz) >> 12) & 0xfffff)
 #define NVME_CMB_SZU(cmbsz) (((cmbsz) >> 8) & 0xf)
 
-#define NVME_CMB_WDS(cmbsz) ((cmbsz)&0x10)
-#define NVME_CMB_RDS(cmbsz) ((cmbsz)&0x8)
-#define NVME_CMB_LISTS(cmbsz) ((cmbsz)&0x4)
-#define NVME_CMB_CQS(cmbsz) ((cmbsz)&0x2)
-#define NVME_CMB_SQS(cmbsz) ((cmbsz)&0x1)
+#define NVME_CMB_WDS(cmbsz) ((cmbsz) & 0x10)
+#define NVME_CMB_RDS(cmbsz) ((cmbsz) & 0x8)
+#define NVME_CMB_LISTS(cmbsz) ((cmbsz) & 0x4)
+#define NVME_CMB_CQS(cmbsz) ((cmbsz) & 0x2)
+#define NVME_CMB_SQS(cmbsz) ((cmbsz) & 0x1)
 
 enum {
 	NVME_CC_ENABLE = 1 << 0,
@@ -304,41 +304,29 @@ struct nvme_reservation_status {
 
 /* I/O commands */
 
-#define NVME_OPCODES(op)			\
-	op(nvme_cmd_flush, 0x00)		\
-	op(nvme_cmd_write, 0x01)		\
-	op(nvme_cmd_read, 0x02)			\
-	op(nvme_cmd_write_uncor, 0x04)		\
-	op(nvme_cmd_compare, 0x05)		\
-	op(nvme_cmd_write_zeroes, 0x08)		\
-	op(nvme_cmd_dsm, 0x09)			\
-	op(nvme_cmd_verify, 0x0c)		\
-	op(nvme_cmd_resv_register, 0x0d)	\
-	op(nvme_cmd_resv_report, 0x0e)		\
-	op(nvme_cmd_resv_acquire, 0x11)		\
-	op(nvme_cmd_resv_release, 0x15)		\
-	op(nvme_cmd_zone_mgmt_send, 0x79)	\
-	op(nvme_cmd_zone_mgmt_recv, 0x7a)	\
-	op(nvme_cmd_zone_append, 0x7d) \
-	op(nvme_cmd_kv_store, 0x81) \
-	op(nvme_cmd_kv_append, 0x83) \
-	op(nvme_cmd_kv_retrieve, 0x90) \
-	op(nvme_cmd_kv_delete, 0xA1) \
-	op(nvme_cmd_kv_iter_req, 0xB1) \
-	op(nvme_cmd_kv_iter_read, 0xB2) \
-	op(nvme_cmd_kv_exist, 0xB3) \
-	op(nvme_cmd_kv_batch, 0x85) \
+#define NVME_OPCODES(op)                                                                          \
+	op(nvme_cmd_flush, 0x00) op(nvme_cmd_write, 0x01) op(nvme_cmd_read, 0x02) op(             \
+		nvme_cmd_write_uncor, 0x04) op(nvme_cmd_compare, 0x05) op(nvme_cmd_write_zeroes,  \
+									  0x08)                   \
+		op(nvme_cmd_dsm, 0x09) op(nvme_cmd_verify, 0x0c) op(nvme_cmd_resv_register, 0x0d) \
+			op(nvme_cmd_resv_report, 0x0e) op(nvme_cmd_resv_acquire, 0x11) op(        \
+				nvme_cmd_resv_release, 0x15) op(nvme_cmd_zone_mgmt_send, 0x79)    \
+				op(nvme_cmd_zone_mgmt_recv, 0x7a) op(nvme_cmd_zone_append, 0x7d)  \
+					op(nvme_cmd_kv_store, 0x81) op(nvme_cmd_kv_append, 0x83)  \
+						op(nvme_cmd_kv_retrieve,                          \
+						   0x90) op(nvme_cmd_kv_delete,                   \
+							    0xA1) op(nvme_cmd_kv_iter_req, 0xB1)  \
+							op(nvme_cmd_kv_iter_read,                 \
+							   0xB2) op(nvme_cmd_kv_exist, 0xB3)      \
+								op(nvme_cmd_kv_batch, 0x85)       \
+									op(nvme_cmd_filter, 0x66)
 
 #define ENUM_NVME_OP(name, value) name = value,
 #define STRING_NVME_OP(name, value) [name] = #name,
 
-enum nvme_opcode {
-	NVME_OPCODES(ENUM_NVME_OP)
-};
+enum nvme_opcode { NVME_OPCODES(ENUM_NVME_OP) };
 
-static const char *const __nvme_opcode_strings[] = {
-	NVME_OPCODES(STRING_NVME_OP)
-};
+static const char *const __nvme_opcode_strings[] = { NVME_OPCODES(STRING_NVME_OP) };
 
 #define nvme_opcode_string(opcode) \
 	(__nvme_opcode_strings[opcode] ? __nvme_opcode_strings[opcode] : "unknown")
@@ -353,6 +341,23 @@ struct nvme_common_command {
 	__le64 prp1;
 	__le64 prp2;
 	__le32 cdw10[6];
+};
+
+struct nvme_filter_command {
+	__u8 opcode;
+	__u8 flags;
+	__u16 command_id;
+	__le32 nsid;
+	__u64 rsvd2;
+	__le64 metadata;
+	__le64 prp1;
+	__le64 prp2;
+	__le64 slba;
+	__le16 length;
+	__le16 filter_factor;
+	__le32 filter_index;
+	__le32 filter_op;
+	__le32 filter_const;
 };
 
 struct nvme_rw_command {
@@ -619,6 +624,7 @@ struct nvme_command {
 	union {
 		struct nvme_common_command common;
 		struct nvme_rw_command rw;
+		struct nvme_filter_command filter;
 		struct nvme_get_log_page_command get_log_page;
 		struct nvme_identify identify;
 		struct nvme_features features;

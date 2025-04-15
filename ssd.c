@@ -384,7 +384,8 @@ uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 	lun = get_lun(ssd, ppa);
 	ch = get_ch(ssd, ppa);
 	cell = get_cell(ssd, ppa);
-	remaining = ncmd->xfer_size;
+	//剩余传输的数据根据放大因子进行变化
+	remaining = ncmd->xfer_size * ncmd->amp_factor / 100;
 
 	switch (c) {
 	case NAND_READ:
